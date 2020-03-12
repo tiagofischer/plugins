@@ -35,6 +35,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +61,8 @@ public class Camera {
   private boolean recordingVideo;
   private CamcorderProfile recordingProfile;
   private int currentOrientation = ORIENTATION_UNKNOWN;
+  private Date lastDate = new Date();
+  private int lastCount = 0;
 
   // Mirrors camera.dart
   public enum ResolutionPreset {
@@ -428,6 +431,7 @@ public class Camera {
       throws CameraAccessException {
     createCaptureSession(CameraDevice.TEMPLATE_RECORD, imageStreamReader.getSurface());
 
+    lastDate = new Date();
     imageStreamChannel.setStreamHandler(
         new EventChannel.StreamHandler() {
           @Override
@@ -445,6 +449,9 @@ public class Camera {
   private void setImageStreamImageAvailableListener(final EventChannel.EventSink imageStreamSink) {
     imageStreamReader.setOnImageAvailableListener(
         reader -> {
+          long diff = lastDate.getTime() - new Date().getTime();
+          if (diff / 1000 < lastCount) return; // 10/s
+          lastCount++;
           Image img = reader.acquireLatestImage();
           if (img == null) return;
 
