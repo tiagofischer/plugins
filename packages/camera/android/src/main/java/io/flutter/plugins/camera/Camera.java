@@ -7,6 +7,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.ImageFormat;
+import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -101,7 +102,7 @@ public class Camera {
             // Convert the raw deg angle to the nearest multiple of 90.
             currentOrientation = (int) Math.round(i / 90.0) * 90;
           }
-        };
+      };
     orientationEventListener.enable();
 
     CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraName);
@@ -449,34 +450,58 @@ public class Camera {
   private void setImageStreamImageAvailableListener(final EventChannel.EventSink imageStreamSink) {
     imageStreamReader.setOnImageAvailableListener(
         reader -> {
-          long diff = lastDate.getTime() - new Date().getTime();
-          if (diff / 1000 < lastCount) return; // 10/s
-          lastCount++;
+
           Image img = reader.acquireLatestImage();
           if (img == null) return;
 
-          List<Map<String, Object>> planes = new ArrayList<>();
-          for (Image.Plane plane : img.getPlanes()) {
-            ByteBuffer buffer = plane.getBuffer();
+          long diff = new Date().getTime() - lastDate.getTime();
+          if (diff / 100 < lastCount) {
+            // Limiting in sending 10 frames per second to the Flutter side, sending and "empty" frame
+            Map<String, Object> imageBuffer = new HashMap<>();
+            imageBuffer.put("width", 1);
+            imageBuffer.put("height", 1);
+            imageBuffer.put("format", null);
+            List<Map<String, Object>> planes = new ArrayList<>();
+            imageBuffer.put("planes", planes);
+            imageStreamSink.success(imageBuffer);
+          } else {
+            // Sending only a 400x400 square in the middle of the image
+            lastCount++;
 
-            byte[] bytes = new byte[buffer.remaining()];
-            buffer.get(bytes, 0, bytes.length);
+            Image.Plane[] planes    = img.getPlanes();
+            ByteBuffer buffer       = planes[0].getBuffer();
+            int stride              = planes[0].getRowStride();
+            buffer.rewind();
+            byte[] Y = new byte[buffer.capacity()];
+            buffer.get(Y);
 
+            int t=(img.getHeight()-400)/2; int l=(img.getWidth()-400)/2;
+            int out_h = 400; int out_w = 400;
+            byte[] out = new byte[out_w*out_h];
+
+            int firstRowOffset = stride * t + l;
+            for (int row = 0; row < out_h; row++) {
+              buffer.position(firstRowOffset + row * stride);
+              buffer.get(out, row * out_w, out_w);
+            }
+
+            List<Map<String, Object>> _planes = new ArrayList<>();
             Map<String, Object> planeBuffer = new HashMap<>();
-            planeBuffer.put("bytesPerRow", plane.getRowStride());
-            planeBuffer.put("bytesPerPixel", plane.getPixelStride());
-            planeBuffer.put("bytes", bytes);
+            //planeBuffer.put("bytesPerRow", planes[0].getRowStride());
+            planeBuffer.put("bytesPerRow", 400);
+            planeBuffer.put("bytesPerPixel", planes[0].getPixelStride());
+            planeBuffer.put("bytes", out);
+            _planes.add(planeBuffer);
 
-            planes.add(planeBuffer);
+            Map<String, Object> imageBuffer = new HashMap<>();
+            imageBuffer.put("width", 400);
+            imageBuffer.put("height", 400);
+            imageBuffer.put("format", img.getFormat());
+            imageBuffer.put("planes", _planes);
+
+            imageStreamSink.success(imageBuffer);
           }
 
-          Map<String, Object> imageBuffer = new HashMap<>();
-          imageBuffer.put("width", img.getWidth());
-          imageBuffer.put("height", img.getHeight());
-          imageBuffer.put("format", img.getFormat());
-          imageBuffer.put("planes", planes);
-
-          imageStreamSink.success(imageBuffer);
           img.close();
         },
         null);
